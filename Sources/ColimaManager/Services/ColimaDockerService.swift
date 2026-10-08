@@ -1,0 +1,407 @@
+import Foundation
+
+struct ColimaDockerService {
+    private let runner: DockerCommandRunner
+    private let decoder = JSONDecoder()
+
+    init(runner: DockerCommandRunner = DockerCommandRunner()) {
+        self.runner = runner
+    }
+
+    func connectionState() async -> ColimaConnectionState {
+        do {
+            let version = try await runner.runChecked(["info", "--format", "{{.ServerVersion}}"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !version.isEmpty else {
+                return .unavailable(message: "Colima is unavailable or returned no server version.")
+            }
+            return .connected(serverVersion: version)
+        } catch {
+            return .unavailable(message: error.localizedDescription)
+        }
+    }
+
+    func loadStacks() async throws -> [StackResource] {
+        async let projectOutput = runner.runChecked(["compose", "ls", "--all", "--format", "json"])
+        async let containers = fetchContainers()
+
+        let projects = try decoder.decode([ComposeProjectRecord].self, from: Data(try await projectOutput.utf8))
+        let allContainers = try await containers
+        let grouped = Dictionary(grouping: allContainers.compactMap { container -> (String, ContainerResource)? in
+            guard let name = container.projectName else { return nil }
+            return (name, container)
+        }, by: \.0)
+
+        return projects.map { project in
+            let projectContainers = (grouped[project.name] ?? []).map(\.1)
+            let workingDirectory = projectContainers
+                .compactMap { $0.labels["com.docker.compose.project.working_dir"] }
+                .first
+
+            return StackResource(
+                id: project.name,
+                status: project.status ?? "unknown",
+                configFiles: parseConfigFiles(project.configFiles),
+                workingDirectory: workingDirectory,
+                containerCount: projectContainers.count,
+                runningContainerCount: projectContainers.filter(\.isRunning).count
+            )
+        }
+        .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+    }
+
+    func loadContainers() async throws -> [ContainerResource] {
+        try await fetchContainers()
+    }
+
+    func loadImages() async throws -> [ImageResource] {
+        async let output = runner.runChecked(["image", "ls", "--all", "--no-trunc", "--format", "json"])
+        async let containers = fetchContainers()
+
+        let records = try decodeLines(ImageListRecord.self, from: try await output)
+        let allContainers = try await containers
+        let references = Dictionary(grouping: allContainers, by: { $0.imageID.lowercased() })
+
+        struct Aggregate {
+            var repository: String
+            var tags: Set<String>
+            var size: String
+        }
+
+        var aggregates: [String: Aggregate] = [:]
+        for record in records {
+            let imageID = record.id
+            let repository = record.repository == "<none>" ? "<none>" : record.repository
+            let tag = record.tag == "<none>" ? nil : record.tag
+            if var aggregate = aggregates[imageID] {
+                if let tag { aggregate.tags.insert(tag) }
+                if aggregate.repository == "<none>", repository != "<none>" {
+                    aggregate.repository = repository
+                }
+                aggregates[imageID] = aggregate
+            } else {
+                aggregates[imageID] = Aggregate(
+                    repository: repository,
+                    tags: Set(tag.map { [$0] } ?? []),
+                    size: record.size
+                )
+            }
+        }
+
+        let resources: [ImageResource] = aggregates.map { imageID, aggregate in
+            ImageResource(
+                id: imageID,
+                repository: aggregate.repository,
+                tags: aggregate.tags.sorted(),
+                sizeDescription: aggregate.size,
+                containerCount: references[imageID.lowercased()]?.count ?? 0
+            )
+        }
+        return resources.sorted(by: { leftImage, rightImage in
+            let leftName = leftImage.tags.first.map { "\(leftImage.repository):\($0)" } ?? leftImage.repository
+            let rightName = rightImage.tags.first.map { "\(rightImage.repository):\($0)" } ?? rightImage.repository
+            return leftName.localizedStandardCompare(rightName) == .orderedAscending
+        })
+    }
+
+    func loadVolumes() async throws -> [VolumeResource] {
+        async let namesOutput = runner.runChecked(["volume", "ls", "--quiet"])
+        async let containers = fetchContainers()
+
+        let names = lines(try await namesOutput)
+        let inspections: [VolumeInspection]
+        if names.isEmpty {
+            inspections = []
+        } else {
+            let output = try await runner.runChecked(["volume", "inspect"] + names)
+            inspections = try decodeArray(VolumeInspection.self, from: output)
+        }
+        let allContainers = try await containers
+        let references = Dictionary(grouping: allContainers.flatMap { container in
+            container.mounts.compactMap { mount -> (String, String)? in
+                guard mount.type.lowercased() == "volume", let name = mount.volumeName else { return nil }
+                return (name, container.name)
+            }
+        }, by: \.0)
+
+        return inspections.map { volume in
+            let projectName = volume.labels?["com.docker.compose.project"]
+            return VolumeResource(
+                id: volume.name,
+                driver: volume.driver,
+                labels: volume.labels ?? [:],
+                projectName: projectName,
+                containerNames: (references[volume.name] ?? []).map(\.1).sorted()
+            )
+        }
+        .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+    }
+
+    func loadNetworks() async throws -> [NetworkResource] {
+        async let recordsOutput = runner.runChecked(["network", "ls", "--no-trunc", "--format", "json"])
+        async let containers = fetchContainers()
+
+        let records = try decodeLines(NetworkListRecord.self, from: try await recordsOutput)
+        let inspections: [NetworkInspection]
+        if records.isEmpty {
+            inspections = []
+        } else {
+            let output = try await runner.runChecked(["network", "inspect"] + records.map(\.id))
+            inspections = try decodeArray(NetworkInspection.self, from: output)
+        }
+        let allContainers = try await containers
+        let referencesByNetworkID = Dictionary(grouping: allContainers.flatMap { container in
+            container.networkIDs.map { ($0.lowercased(), container.name) }
+        }, by: \.0)
+        let referencesByNetworkName = Dictionary(grouping: allContainers.flatMap { container in
+            container.networkNames.map { ($0.lowercased(), container.name) }
+        }, by: \.0)
+
+        return inspections.map { network in
+            let inspectNames = network.containers?.values.map(\.name) ?? []
+            let byID = referencesByNetworkID.first { key, _ in
+                key == network.id.lowercased() || network.id.lowercased().hasPrefix(key) || key.hasPrefix(network.id.lowercased())
+            }?.value.map(\.1) ?? []
+            let byName = referencesByNetworkName[network.name.lowercased()]?.map(\.1) ?? []
+            let attached = Set(inspectNames + byID + byName).sorted()
+
+            return NetworkResource(
+                id: network.id,
+                name: network.name,
+                driver: network.driver,
+                scope: network.scope,
+                labels: network.labels ?? [:],
+                projectName: network.labels?["com.docker.compose.project"],
+                containerNames: attached
+            )
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func fetchContainers() async throws -> [ContainerResource] {
+        let listOutput = try await runner.runChecked([
+            "container", "ls", "--all", "--no-trunc", "--format", "json"
+        ])
+        let list = try decodeLines(ContainerListRecord.self, from: listOutput)
+        guard !list.isEmpty else { return [] }
+
+        let inspectOutput = try await runner.runChecked(["inspect", "--type", "container"] + list.map(\.id))
+        let inspected = try decodeArray(ContainerInspection.self, from: inspectOutput)
+
+        return inspected.map { item in
+            let id = item.id
+            let listEntry = list.first(where: { idsMatch($0.id, id) })
+            let name = listEntry?.name ?? item.name.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let networks = item.networkSettings?.networks ?? [:]
+            let mounts = (item.mounts ?? []).map {
+                ContainerMount(type: $0.type, volumeName: $0.name, source: $0.source, destination: $0.destination)
+            }
+
+            return ContainerResource(
+                id: id,
+                name: name,
+                image: item.config.image,
+                imageID: item.image.lowercased(),
+                state: item.state.status,
+                status: listEntry?.status ?? item.state.status,
+                ports: listEntry?.ports ?? "",
+                projectName: item.config.labels?["com.docker.compose.project"],
+                labels: item.config.labels ?? [:],
+                mounts: mounts,
+                networkIDs: networks.values.map { $0.networkID.lowercased() }.filter { !$0.isEmpty },
+                networkNames: Array(networks.keys)
+            )
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func decodeArray<T: Decodable>(_ type: T.Type, from output: String) throws -> [T] {
+        do {
+            return try decoder.decode([T].self, from: Data(output.utf8))
+        } catch {
+            throw DockerCommandError.invalidOutput(error.localizedDescription)
+        }
+    }
+
+    private func decodeLines<T: Decodable>(_ type: T.Type, from output: String) throws -> [T] {
+        try lines(output).map { line in
+            do {
+                return try decoder.decode(T.self, from: Data(line.utf8))
+            } catch {
+                throw DockerCommandError.invalidOutput(error.localizedDescription)
+            }
+        }
+    }
+
+    private func lines(_ output: String) -> [String] {
+        output.split(whereSeparator: \.isNewline).map(String.init)
+    }
+
+    private func parseConfigFiles(_ value: String?) -> [String] {
+        guard let value else { return [] }
+        return value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func idsMatch(_ left: String, _ right: String) -> Bool {
+        let left = left.lowercased()
+        let right = right.lowercased()
+        return left == right || left.hasPrefix(right) || right.hasPrefix(left)
+    }
+}
+
+private struct ComposeProjectRecord: Decodable {
+    let name: String
+    let status: String?
+    let configFiles: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+        case status = "Status"
+        case configFiles = "ConfigFiles"
+    }
+}
+
+private struct ContainerListRecord: Decodable {
+    let id: String
+    let name: String
+    let status: String
+    let ports: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Names"
+        case status = "Status"
+        case ports = "Ports"
+    }
+}
+
+private struct ContainerInspection: Decodable {
+    let id: String
+    let name: String
+    let image: String
+    let config: ContainerConfig
+    let state: ContainerState
+    let mounts: [MountRecord]?
+    let networkSettings: NetworkSettings?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "Id"
+        case name = "Name"
+        case image = "Image"
+        case config = "Config"
+        case state = "State"
+        case mounts = "Mounts"
+        case networkSettings = "NetworkSettings"
+    }
+}
+
+private struct ContainerConfig: Decodable {
+    let image: String
+    let labels: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case image = "Image"
+        case labels = "Labels"
+    }
+}
+
+private struct ContainerState: Decodable {
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case status = "Status"
+    }
+}
+
+private struct MountRecord: Decodable {
+    let type: String
+    let name: String?
+    let source: String
+    let destination: String
+
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case name = "Name"
+        case source = "Source"
+        case destination = "Destination"
+    }
+}
+
+private struct NetworkSettings: Decodable {
+    let networks: [String: NetworkAttachment]
+
+    enum CodingKeys: String, CodingKey {
+        case networks = "Networks"
+    }
+}
+
+private struct NetworkAttachment: Decodable {
+    let networkID: String
+
+    enum CodingKeys: String, CodingKey {
+        case networkID = "NetworkID"
+    }
+}
+
+private struct ImageListRecord: Decodable {
+    let id: String
+    let repository: String
+    let tag: String
+    let size: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case repository = "Repository"
+        case tag = "Tag"
+        case size = "Size"
+    }
+}
+
+private struct VolumeInspection: Decodable {
+    let name: String
+    let driver: String
+    let labels: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+        case driver = "Driver"
+        case labels = "Labels"
+    }
+}
+
+private struct NetworkListRecord: Decodable {
+    let id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+    }
+}
+
+private struct NetworkInspection: Decodable {
+    let id: String
+    let name: String
+    let driver: String
+    let scope: String
+    let labels: [String: String]?
+    let containers: [String: NetworkEndpoint]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "Id"
+        case name = "Name"
+        case driver = "Driver"
+        case scope = "Scope"
+        case labels = "Labels"
+        case containers = "Containers"
+    }
+}
+
+private struct NetworkEndpoint: Decodable {
+    let name: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+    }
+}

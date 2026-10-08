@@ -78,6 +78,7 @@ struct StackResource: Identifiable, Sendable {
 
 struct ContainerMount: Sendable {
     let type: String
+    let volumeName: String?
     let source: String
     let destination: String
 }
@@ -117,6 +118,7 @@ struct VolumeResource: Identifiable, Sendable {
 
 struct NetworkResource: Identifiable, Sendable {
     let id: String
+    let name: String
     let driver: String
     let scope: String
     let labels: [String: String]
