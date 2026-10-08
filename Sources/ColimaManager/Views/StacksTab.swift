@@ -38,25 +38,47 @@ struct StacksTab: View {
                 .padding(12)
             }
         }
+        .onChange(of: searchQuery) { query in
+            expandMatchingStacks(for: query)
+        }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
     }
 
     private func stackAccordion(_ stack: StackResource) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            DisclosureGroup(isExpanded: expansionBinding(for: stack)) {
-                containerList(for: stack)
-                    .padding(.top, 8)
-                    .padding(.leading, 16)
-            } label: {
-                stackSummary(stack)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        let isExpanded = expandedStackIDs.contains(stack.id)
 
-            stackActions(stack)
-                .padding(.top, 4)
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        toggleStack(stack)
+                    }
+                } label: {
+                    stackSummary(stack, isExpanded: isExpanded)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") stack \(stack.id)")
+                .accessibilityValue("\(stack.containerCount) containers")
+
+                stackActions(stack)
+                    .padding(.trailing, 10)
+            }
+
+            if isExpanded {
+                Divider()
+                    .padding(.horizontal, 12)
+
+                containerList(for: stack)
+                    .padding(.leading, 48)
+                    .padding(.trailing, 12)
+                    .padding(.vertical, 10)
+                    .transition(.opacity)
+            }
         }
-        .padding(12)
+        .padding(.vertical, 4)
         .background(.background, in: RoundedRectangle(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
@@ -64,8 +86,14 @@ struct StacksTab: View {
         }
     }
 
-    private func stackSummary(_ stack: StackResource) -> some View {
-        HStack(spacing: 12) {
+    private func stackSummary(_ stack: StackResource, isExpanded: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(stack.id)
                     .font(.headline)
@@ -80,11 +108,14 @@ struct StacksTab: View {
 
             StatusPill(title: stack.status, isPositive: stack.runningContainerCount > 0)
 
-            Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
+                Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize()
         }
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .padding(.leading, 10)
+        .padding(.trailing, 12)
         .contentShape(Rectangle())
     }
 
@@ -102,7 +133,7 @@ struct StacksTab: View {
                     HStack(spacing: 12) {
                         Image(systemName: "shippingbox")
                             .foregroundStyle(.secondary)
-                            .frame(width: 18)
+                            .frame(width: 24, height: 24)
 
                         VStack(alignment: .leading, spacing: 3) {
                             Text(container.name)
@@ -137,7 +168,7 @@ struct StacksTab: View {
     }
 
     private func stackActions(_ stack: StackResource) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ResourceActionButton(
                 symbol: "play.fill",
                 title: "Start stack",
@@ -162,22 +193,22 @@ struct StacksTab: View {
         }
     }
 
-    private func expansionBinding(for stack: StackResource) -> Binding<Bool> {
-        Binding(
-            get: {
-                let containerMatchesSearch = !searchQuery.isEmpty && stack.containers.contains { container in
-                    container.name.localizedCaseInsensitiveContains(searchQuery)
-                        || container.image.localizedCaseInsensitiveContains(searchQuery)
-                }
-                return containerMatchesSearch || expandedStackIDs.contains(stack.id)
-            },
-            set: { isExpanded in
-                if isExpanded {
-                    expandedStackIDs.insert(stack.id)
-                } else {
-                    expandedStackIDs.remove(stack.id)
-                }
+    private func toggleStack(_ stack: StackResource) {
+        if expandedStackIDs.contains(stack.id) {
+            expandedStackIDs.remove(stack.id)
+        } else {
+            expandedStackIDs.insert(stack.id)
+        }
+    }
+
+    private func expandMatchingStacks(for query: String) {
+        guard model.selectedTab == .stacks, !query.isEmpty else { return }
+        let matchingIDs = model.stacks.filter { stack in
+            stack.containers.contains { container in
+                container.name.localizedCaseInsensitiveContains(query)
+                    || container.image.localizedCaseInsensitiveContains(query)
             }
-        )
+        }.map(\.id)
+        expandedStackIDs.formUnion(matchingIDs)
     }
 }

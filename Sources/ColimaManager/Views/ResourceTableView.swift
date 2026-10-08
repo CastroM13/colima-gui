@@ -106,7 +106,10 @@ struct ResourceActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(isDestructive ? Color.red : Color.accentColor)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .help(title)

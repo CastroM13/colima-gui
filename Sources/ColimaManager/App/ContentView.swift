@@ -59,6 +59,7 @@ struct ContentView: View {
                 }
             )
         }
+        .navigationTitle(model.selectedTab.title)
     }
 }
 
@@ -67,17 +68,8 @@ private struct AppHeader: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: "shippingbox.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Colima Manager")
-                    .font(.headline)
-                Text(model.selectedTab.title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(model.selectedTab.title)
+                .font(.title3.weight(.semibold))
 
             Spacer(minLength: 12)
             if !model.activeOperations.isEmpty {
