@@ -51,6 +51,8 @@ enum DockerCommandError: LocalizedError {
     case launchFailed(String)
     case commandFailed(command: String, message: String)
     case invalidOutput(String)
+    case resourceInUse(name: String, users: [String])
+    case unsupportedResource(name: String)
 
     var errorDescription: String? {
         switch self {
@@ -63,6 +65,10 @@ enum DockerCommandError: LocalizedError {
             return "\(command): \(detail)"
         case let .invalidOutput(message):
             return "Docker returned data the app could not read: \(message)"
+        case let .resourceInUse(name, users):
+            return "\(name) is in use by \(users.joined(separator: ", "))."
+        case let .unsupportedResource(name):
+            return "\(name) is managed by Docker and cannot be removed here."
         }
     }
 }
@@ -124,6 +130,8 @@ struct NetworkResource: Identifiable, Sendable {
     let labels: [String: String]
     let projectName: String?
     let containerNames: [String]
+
+    var isBuiltIn: Bool { ["bridge", "host", "none"].contains(name.lowercased()) }
 }
 
 struct StackDeletionPlan: Identifiable, Sendable {

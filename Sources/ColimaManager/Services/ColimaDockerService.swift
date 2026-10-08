@@ -178,6 +178,181 @@ struct ColimaDockerService {
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    func startStack(_ stack: StackResource) async throws {
+        _ = try await runner.runChecked(composeArguments(for: stack, action: "start"))
+    }
+
+    func stopStack(_ stack: StackResource) async throws {
+        _ = try await runner.runChecked(composeArguments(for: stack, action: "stop"))
+    }
+
+    func prepareStackDeletion(_ stack: StackResource) async throws -> StackDeletionPlan {
+        async let containersTask = fetchContainers()
+        async let volumesTask = loadVolumes()
+        async let networksTask = loadNetworks()
+
+        let containers = try await containersTask
+        let volumes = try await volumesTask
+        let networks = try await networksTask
+        let projectContainers = containers.filter { $0.projectName == stack.id }
+        let projectContainerNames = Set(projectContainers.map(\.name))
+
+        let projectVolumes = volumes.filter { $0.projectName == stack.id }
+        let projectNetworks = networks.filter { $0.projectName == stack.id }
+        let removableVolumes = projectVolumes.filter { volume in
+            volume.containerNames.allSatisfy { projectContainerNames.contains($0) }
+        }
+        let blockedVolumes = projectVolumes.filter { volume in
+            volume.containerNames.contains { !projectContainerNames.contains($0) }
+        }
+        let removableNetworks = projectNetworks.filter { network in
+            !network.isBuiltIn && network.containerNames.allSatisfy { projectContainerNames.contains($0) }
+        }
+        let blockedNetworks = projectNetworks.filter { network in
+            network.containerNames.contains { !projectContainerNames.contains($0) }
+        }
+
+        return StackDeletionPlan(
+            id: stack.id,
+            stack: stack,
+            containers: projectContainers,
+            removableVolumes: removableVolumes,
+            removableNetworks: removableNetworks,
+            blockedVolumes: blockedVolumes,
+            blockedNetworks: blockedNetworks
+        )
+    }
+
+    func deleteStack(
+        _ plan: StackDeletionPlan,
+        removingVolumes volumeIDs: Set<String>,
+        removingNetworks networkIDs: Set<String>
+    ) async throws -> StackDeletionResult {
+        let before = try await fetchContainers()
+        let currentProjectContainers = before.filter { $0.projectName == plan.id }
+        let plannedContainerIDs = Set(plan.containers.map(\.id))
+        let currentContainerIDs = Set(currentProjectContainers.map(\.id))
+        guard currentContainerIDs == plannedContainerIDs else {
+            throw DockerCommandError.invalidOutput("The stack changed after the review was opened. Refresh it and review the deletion again.")
+        }
+
+        var issues: [String] = []
+        var removedContainerCount = 0
+        if !currentProjectContainers.isEmpty {
+            let output = try await runner.run(["container", "rm", "--force"] + currentProjectContainers.map(\.id))
+            let after = try await fetchContainers()
+            let remainingIDs = Set(after.filter { $0.projectName == plan.id }.map(\.id))
+            removedContainerCount = currentProjectContainers.filter { !remainingIDs.contains($0.id) }.count
+            if output.status != 0 {
+                let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+                issues.append(detail.isEmpty ? "Some stack containers could not be removed." : detail)
+            }
+        }
+
+        var removedVolumes: [String] = []
+        if !volumeIDs.isEmpty {
+            let currentVolumes = try await loadVolumes()
+            for volumeID in volumeIDs.sorted() {
+                guard plan.removableVolumes.contains(where: { $0.id == volumeID }),
+                      let volume = currentVolumes.first(where: { $0.id == volumeID }),
+                      volume.projectName == plan.id,
+                      volume.containerNames.isEmpty else {
+                    issues.append("Kept volume \(volumeID) because it is no longer eligible for cleanup.")
+                    continue
+                }
+                let output = try await runner.run(["volume", "rm", volumeID])
+                if output.status == 0 {
+                    removedVolumes.append(volumeID)
+                } else {
+                    let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+                    issues.append(detail.isEmpty ? "Could not remove volume \(volumeID)." : detail)
+                }
+            }
+        }
+
+        var removedNetworks: [String] = []
+        if !networkIDs.isEmpty {
+            let currentNetworks = try await loadNetworks()
+            for networkID in networkIDs.sorted() {
+                guard plan.removableNetworks.contains(where: { $0.id == networkID }),
+                      let network = currentNetworks.first(where: { $0.id == networkID }),
+                      network.projectName == plan.id,
+                      !network.isBuiltIn,
+                      network.containerNames.isEmpty else {
+                    issues.append("Kept network \(networkID) because it is no longer eligible for cleanup.")
+                    continue
+                }
+                let output = try await runner.run(["network", "rm", networkID])
+                if output.status == 0 {
+                    removedNetworks.append(network.name)
+                } else {
+                    let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+                    issues.append(detail.isEmpty ? "Could not remove network \(network.name)." : detail)
+                }
+            }
+        }
+
+        return StackDeletionResult(
+            removedContainerCount: removedContainerCount,
+            removedVolumes: removedVolumes,
+            removedNetworks: removedNetworks,
+            issues: issues
+        )
+    }
+
+    func startContainer(_ container: ContainerResource) async throws {
+        _ = try await runner.runChecked(["container", "start", container.id])
+    }
+
+    func stopContainer(_ container: ContainerResource) async throws {
+        _ = try await runner.runChecked(["container", "stop", container.id])
+    }
+
+    func restartContainer(_ container: ContainerResource) async throws {
+        _ = try await runner.runChecked(["container", "restart", container.id])
+    }
+
+    func removeContainer(_ container: ContainerResource) async throws {
+        _ = try await runner.runChecked(["container", "rm", "--force", container.id])
+    }
+
+    func removeImage(_ image: ImageResource) async throws {
+        let containers = try await fetchContainers()
+        let users = containers.filter { $0.imageID.lowercased() == image.id.lowercased() }.map(\.name)
+        guard users.isEmpty else {
+            throw DockerCommandError.resourceInUse(name: image.id, users: users)
+        }
+        _ = try await runner.runChecked(["image", "rm", image.id])
+    }
+
+    func removeVolume(_ volume: VolumeResource) async throws {
+        let current = try await loadVolumes().first(where: { $0.id == volume.id })
+        if let current, !current.containerNames.isEmpty {
+            throw DockerCommandError.resourceInUse(name: volume.id, users: current.containerNames)
+        }
+        _ = try await runner.runChecked(["volume", "rm", volume.id])
+    }
+
+    func removeNetwork(_ network: NetworkResource) async throws {
+        guard !network.isBuiltIn else {
+            throw DockerCommandError.unsupportedResource(name: network.name)
+        }
+        let current = try await loadNetworks().first(where: { $0.id == network.id })
+        if let current, !current.containerNames.isEmpty {
+            throw DockerCommandError.resourceInUse(name: network.name, users: current.containerNames)
+        }
+        _ = try await runner.runChecked(["network", "rm", network.id])
+    }
+
+    private func composeArguments(for stack: StackResource, action: String) throws -> [String] {
+        guard !stack.configFiles.isEmpty else {
+            throw DockerCommandError.invalidOutput("No Compose files were recorded for stack \(stack.id).")
+        }
+        return ["compose", "--project-name", stack.id]
+            + stack.configFiles.flatMap { ["--file", $0] }
+            + [action]
+    }
+
     private func fetchContainers() async throws -> [ContainerResource] {
         let listOutput = try await runner.runChecked([
             "container", "ls", "--all", "--no-trunc", "--format", "json"
