@@ -77,12 +77,15 @@ struct StackDeletionSheet: View {
                 Button("Delete Stack", role: .destructive) {
                     onDelete(selectedVolumeIDs, selectedNetworkIDs)
                 }
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
         .frame(width: 540)
         .frame(minHeight: 340, maxHeight: 560)
+        .onAppear {
+            selectedVolumeIDs.removeAll()
+            selectedNetworkIDs.removeAll()
+        }
     }
 
     private func cleanupSection<Resource: Identifiable, Label: StringProtocol>(

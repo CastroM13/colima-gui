@@ -9,11 +9,11 @@ struct ContentView: View {
             Divider()
 
             if let message = model.errorMessage {
-                FeedbackNotice(message: message, isError: true) {
+                OperationFeedback(message: message, kind: .warning) {
                     model.dismissFeedback()
                 }
             } else if let message = model.statusMessage {
-                FeedbackNotice(message: message, isError: false) {
+                OperationFeedback(message: message, kind: .success) {
                     model.dismissFeedback()
                 }
             }
@@ -80,6 +80,10 @@ private struct AppHeader: View {
             }
 
             Spacer(minLength: 12)
+            if !model.activeOperations.isEmpty {
+                ProgressView().controlSize(.small)
+                    .help("Docker operation in progress")
+            }
             ConnectionBadge(state: model.connectionState)
             TextField("Search", text: $model.searchText)
                 .textFieldStyle(.roundedBorder)

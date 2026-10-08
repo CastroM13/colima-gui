@@ -47,7 +47,7 @@ struct StacksTab: View {
                             isDisabled: !model.connectionState.isConnected
                                 || model.isBusy("stack", stack.id)
                                 || stack.configFiles.isEmpty
-                                || stack.runningContainerCount == stack.containerCount
+                                || (stack.containerCount > 0 && stack.runningContainerCount == stack.containerCount)
                         ) { model.startStack(stack) }
                         ResourceActionButton(
                             symbol: "stop.fill",

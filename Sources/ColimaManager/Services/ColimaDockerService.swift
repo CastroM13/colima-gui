@@ -17,8 +17,22 @@ struct ColimaDockerService {
             }
             return .connected(serverVersion: version)
         } catch {
-            return .unavailable(message: error.localizedDescription)
+            return .unavailable(message: connectionMessage(for: error))
         }
+    }
+
+    private func connectionMessage(for error: Error) -> String {
+        let message = error.localizedDescription
+        let normalized = message.lowercased()
+        if normalized.contains("context \"colima\"") && normalized.contains("not found") {
+            return "The Colima Docker context is missing. Run `colima start` to create it, then refresh."
+        }
+        if normalized.contains("cannot connect to the docker daemon")
+            || normalized.contains("is the docker daemon running")
+            || normalized.contains("no such file or directory") {
+            return "Colima is not reachable. Start it with `colima start`, then refresh."
+        }
+        return message
     }
 
     func loadStacks() async throws -> [StackResource] {
@@ -506,7 +520,7 @@ private struct MountRecord: Decodable {
 }
 
 private struct NetworkSettings: Decodable {
-    let networks: [String: NetworkAttachment]
+    let networks: [String: NetworkAttachment]?
 
     enum CodingKeys: String, CodingKey {
         case networks = "Networks"
