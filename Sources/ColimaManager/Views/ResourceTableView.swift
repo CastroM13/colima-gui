@@ -82,20 +82,6 @@ struct EmptyResourceState: View {
     }
 }
 
-struct StatusPill: View {
-    let title: String
-    var isPositive = false
-
-    var body: some View {
-        Text(title)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .foregroundStyle(isPositive ? Color.green : Color.secondary)
-            .background((isPositive ? Color.green : Color.gray).opacity(0.12), in: Capsule())
-    }
-}
-
 struct ResourceActionButton: View {
     let symbol: String
     let title: String

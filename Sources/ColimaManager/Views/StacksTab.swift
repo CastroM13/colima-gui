@@ -94,6 +94,17 @@ struct StacksTab: View {
                 .frame(width: 24, height: 24)
                 .accessibilityHidden(true)
 
+            ResourceStatusIcon(
+                symbol: "square.stack.3d.up",
+                tint: ResourceStatusTint.color(for: stack),
+                title: stack.id,
+                status: stack.status,
+                details: [
+                    "\(stack.runningContainerCount) running · \(stack.containerCount) total",
+                    stack.configFiles.first ?? "Compose file unavailable"
+                ]
+            )
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(stack.id)
                     .font(.headline)
@@ -106,9 +117,7 @@ struct StacksTab: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            StatusPill(title: stack.status, isPositive: stack.runningContainerCount > 0)
-
-                Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
+            Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize()
@@ -131,9 +140,17 @@ struct StacksTab: View {
             VStack(spacing: 6) {
                 ForEach(stack.containers) { container in
                     HStack(spacing: 12) {
-                        Image(systemName: "shippingbox")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
+                        ResourceStatusIcon(
+                            symbol: "shippingbox",
+                            tint: ResourceStatusTint.color(for: container),
+                            title: container.name,
+                            status: container.status,
+                            details: [
+                                "State: \(container.state.capitalized)",
+                                "Image: \(container.image)",
+                                "Ports: \(container.ports.isEmpty ? "None" : container.ports)"
+                            ]
+                        )
 
                         VStack(alignment: .leading, spacing: 3) {
                             Text(container.name)
@@ -157,7 +174,7 @@ struct StacksTab: View {
                                 .help(container.ports)
                         }
 
-                        StatusPill(title: container.status, isPositive: container.isRunning)
+                        ContainerActionButtons(container: container, refreshTab: .stacks)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)

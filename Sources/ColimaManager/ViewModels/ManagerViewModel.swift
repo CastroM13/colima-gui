@@ -20,6 +20,7 @@ final class ManagerViewModel: ObservableObject {
     @Published var isShowingRemovalConfirmation = false
 
     private let service: ColimaDockerService
+    private var removalSourceTab: ResourceTab?
 
     init(service: ColimaDockerService = ColimaDockerService()) {
         self.service = service
@@ -125,29 +126,30 @@ final class ManagerViewModel: ObservableObject {
         }
     }
 
-    func startContainer(_ container: ContainerResource) {
-        perform("container:\(container.id)", tab: .containers) {
+    func startContainer(_ container: ContainerResource, refreshTab: ResourceTab = .containers) {
+        perform("container:\(container.id)", tab: refreshTab) {
             try await self.service.startContainer(container)
             return OperationSummary(message: "Started \(container.name).")
         }
     }
 
-    func stopContainer(_ container: ContainerResource) {
-        perform("container:\(container.id)", tab: .containers) {
+    func stopContainer(_ container: ContainerResource, refreshTab: ResourceTab = .containers) {
+        perform("container:\(container.id)", tab: refreshTab) {
             try await self.service.stopContainer(container)
             return OperationSummary(message: "Stopped \(container.name).")
         }
     }
 
-    func restartContainer(_ container: ContainerResource) {
-        perform("container:\(container.id)", tab: .containers) {
+    func restartContainer(_ container: ContainerResource, refreshTab: ResourceTab = .containers) {
+        perform("container:\(container.id)", tab: refreshTab) {
             try await self.service.restartContainer(container)
             return OperationSummary(message: "Restarted \(container.name).")
         }
     }
 
-    func requestRemoval(_ target: RemovalTarget) {
+    func requestRemoval(_ target: RemovalTarget, from sourceTab: ResourceTab? = nil) {
         removalTarget = target
+        removalSourceTab = sourceTab
         isShowingRemovalConfirmation = true
         statusMessage = nil
         errorMessage = nil
@@ -156,16 +158,19 @@ final class ManagerViewModel: ObservableObject {
     func cancelRemoval() {
         isShowingRemovalConfirmation = false
         removalTarget = nil
+        removalSourceTab = nil
     }
 
     func confirmRemoval() {
         guard let target = removalTarget else { return }
         isShowingRemovalConfirmation = false
         removalTarget = nil
+        let sourceTab = removalSourceTab
+        removalSourceTab = nil
 
         switch target {
         case let .container(container):
-            perform("container:\(container.id)", tab: .containers) {
+            perform("container:\(container.id)", tab: sourceTab ?? .containers) {
                 try await self.service.removeContainer(container)
                 return OperationSummary(message: "Removed \(container.name); attached volumes were kept.")
             }
