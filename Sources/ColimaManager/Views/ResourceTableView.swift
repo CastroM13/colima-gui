@@ -114,29 +114,3 @@ struct ResourceActionButton: View {
         .disabled(isDisabled)
     }
 }
-
-struct FeedbackNotice: View {
-    let message: String
-    let isError: Bool
-    let dismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-            Text(message)
-                .font(.callout)
-                .lineLimit(3)
-            Spacer()
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.borderless)
-            .help("Dismiss message")
-        }
-        .foregroundStyle(isError ? Color.orange : Color.green)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .background((isError ? Color.orange : Color.green).opacity(0.08))
-    }
-}
