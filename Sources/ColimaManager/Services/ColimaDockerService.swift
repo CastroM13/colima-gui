@@ -57,6 +57,7 @@ struct ColimaDockerService {
                 status: project.status ?? "unknown",
                 configFiles: parseConfigFiles(project.configFiles),
                 workingDirectory: workingDirectory,
+                containers: projectContainers,
                 containerCount: projectContainers.count,
                 runningContainerCount: projectContainers.filter(\.isRunning).count
             )

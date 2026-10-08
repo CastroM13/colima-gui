@@ -78,6 +78,7 @@ struct StackResource: Identifiable, Sendable {
     let status: String
     let configFiles: [String]
     let workingDirectory: String?
+    let containers: [ContainerResource]
     let containerCount: Int
     let runningContainerCount: Int
 }

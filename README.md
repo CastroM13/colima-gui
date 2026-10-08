@@ -4,7 +4,7 @@ A lightweight native macOS app for managing Docker Compose projects and local Do
 
 ## What it manages
 
-- **Stacks:** list Compose projects, start, stop, and remove their containers.
+- **Stacks:** expand Compose projects to see their containers, then start, stop, or remove the project containers.
 - **Containers:** list, start, stop, restart, and remove individual containers.
 - **Images:** inspect local tags, size, and container usage; remove unused images.
 - **Volumes:** inspect project ownership and container usage; remove unused volumes.
