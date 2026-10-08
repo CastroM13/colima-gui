@@ -13,7 +13,7 @@ struct StackDeletionSheet: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Delete stack \(plan.stack.id)?")
                     .font(.title3.weight(.semibold))
-                Text("This stops running containers, then removes \(plan.containers.count) container(s). Compose files on disk are kept.")
+                Text("Docker stops running containers using its configured grace period and may force-terminate one if that period expires. It then removes the containers. Compose files on disk are kept.")
                     .foregroundStyle(.secondary)
             }
 
@@ -21,6 +21,10 @@ struct StackDeletionSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    Text(plan.cleanupNotice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     if !plan.removableNetworks.isEmpty {
                         cleanupSection(
                             title: "Networks",
@@ -61,7 +65,7 @@ struct StackDeletionSheet: View {
                        plan.removableVolumes.isEmpty,
                        plan.blockedNetworks.isEmpty,
                        plan.blockedVolumes.isEmpty {
-                        Text("No project-owned networks or volumes were found for cleanup.")
+                        Text("No eligible project-owned networks or volumes are available for cleanup.")
                             .foregroundStyle(.secondary)
                     }
                 }

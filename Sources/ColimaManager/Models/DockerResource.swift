@@ -142,6 +142,7 @@ struct StackDeletionPlan: Identifiable, Sendable {
     let removableNetworks: [NetworkResource]
     let blockedVolumes: [VolumeResource]
     let blockedNetworks: [NetworkResource]
+    let cleanupNotice: String
 }
 
 struct StackDeletionResult: Sendable {

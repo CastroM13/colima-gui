@@ -204,23 +204,29 @@ struct ColimaDockerService {
         async let containersTask = fetchContainers()
         async let volumesTask = loadVolumes()
         async let networksTask = loadNetworks()
+        async let externalResourcesTask = loadExternalComposeResources(for: stack)
 
         let containers = try await containersTask
         let volumes = try await volumesTask
         let networks = try await networksTask
+        let externalResources = try? await externalResourcesTask
         let projectContainers = containers.filter { $0.projectName == stack.id }
         let projectContainerNames = Set(projectContainers.map(\.name))
 
         let projectVolumes = volumes.filter { $0.projectName == stack.id }
         let projectNetworks = networks.filter { $0.projectName == stack.id }
         let removableVolumes = projectVolumes.filter { volume in
-            volume.containerNames.allSatisfy { projectContainerNames.contains($0) }
+            guard let externalResources,
+                  !externalResources.volumeNames.contains(volume.id) else { return false }
+            return volume.containerNames.allSatisfy { projectContainerNames.contains($0) }
         }
         let blockedVolumes = projectVolumes.filter { volume in
             volume.containerNames.contains { !projectContainerNames.contains($0) }
         }
         let removableNetworks = projectNetworks.filter { network in
-            !network.isBuiltIn && network.containerNames.allSatisfy { projectContainerNames.contains($0) }
+            guard let externalResources,
+                  !externalResources.networkNames.contains(network.name) else { return false }
+            return !network.isBuiltIn && network.containerNames.allSatisfy { projectContainerNames.contains($0) }
         }
         let blockedNetworks = projectNetworks.filter { network in
             network.containerNames.contains { !projectContainerNames.contains($0) }
@@ -233,7 +239,10 @@ struct ColimaDockerService {
             removableVolumes: removableVolumes,
             removableNetworks: removableNetworks,
             blockedVolumes: blockedVolumes,
-            blockedNetworks: blockedNetworks
+            blockedNetworks: blockedNetworks,
+            cleanupNotice: externalResources == nil
+                ? "Optional network and volume cleanup is unavailable because the current Compose configuration could not be checked."
+                : "External Compose networks and volumes are excluded from cleanup."
         )
     }
 
@@ -252,60 +261,92 @@ struct ColimaDockerService {
 
         var issues: [String] = []
         var removedContainerCount = 0
-        if !currentProjectContainers.isEmpty {
-            let runningIDs = currentProjectContainers.filter(\.isRunning).map(\.id)
-            if !runningIDs.isEmpty {
-                _ = try await runner.runChecked(["container", "stop"] + runningIDs)
+        var containersReadyForRemoval: [ContainerResource] = []
+        for container in currentProjectContainers {
+            if container.isRunning {
+                do {
+                    let output = try await runner.run(["container", "stop", container.id])
+                    guard output.status == 0 else {
+                        issues.append("Could not stop \(container.name); it was kept. \(failureDetail(for: output))")
+                        continue
+                    }
+                } catch {
+                    issues.append("Could not stop \(container.name); it was kept. \(error.localizedDescription)")
+                    continue
+                }
             }
-            let output = try await runner.run(["container", "rm"] + currentProjectContainers.map(\.id))
-            let after = try await fetchContainers()
-            let remainingIDs = Set(after.filter { $0.projectName == plan.id }.map(\.id))
-            removedContainerCount = currentProjectContainers.filter { !remainingIDs.contains($0.id) }.count
-            if output.status != 0 {
-                let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-                issues.append(detail.isEmpty ? "Some stack containers could not be removed." : detail)
+            containersReadyForRemoval.append(container)
+        }
+
+        for container in containersReadyForRemoval {
+            do {
+                let output = try await runner.run(["container", "rm", container.id])
+                if output.status == 0 {
+                    removedContainerCount += 1
+                } else {
+                    issues.append("Could not remove \(container.name). \(failureDetail(for: output))")
+                }
+            } catch {
+                issues.append("Could not remove \(container.name). \(error.localizedDescription)")
             }
         }
 
         var removedVolumes: [String] = []
         if !volumeIDs.isEmpty {
-            let currentVolumes = try await loadVolumes()
             for volumeID in volumeIDs.sorted() {
-                guard plan.removableVolumes.contains(where: { $0.id == volumeID }),
-                      let volume = currentVolumes.first(where: { $0.id == volumeID }),
-                      volume.projectName == plan.id,
-                      volume.containerNames.isEmpty else {
-                    issues.append("Kept volume \(volumeID) because it is no longer eligible for cleanup.")
-                    continue
-                }
-                let output = try await runner.run(["volume", "rm", volumeID])
-                if output.status == 0 {
-                    removedVolumes.append(volumeID)
-                } else {
-                    let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-                    issues.append(detail.isEmpty ? "Could not remove volume \(volumeID)." : detail)
+                do {
+                    let currentExternalResources = try await loadExternalComposeResources(for: plan.stack)
+                    guard !currentExternalResources.volumeNames.contains(volumeID) else {
+                        issues.append("Kept volume \(volumeID) because the current Compose configuration declares it external.")
+                        continue
+                    }
+                    let currentVolumes = try await loadVolumes()
+                    guard plan.removableVolumes.contains(where: { $0.id == volumeID }),
+                          let volume = currentVolumes.first(where: { $0.id == volumeID }),
+                          volume.projectName == plan.id,
+                          volume.containerNames.isEmpty else {
+                        issues.append("Kept volume \(volumeID) because it is no longer eligible for cleanup.")
+                        continue
+                    }
+                    let output = try await runner.run(["volume", "rm", volumeID])
+                    if output.status == 0 {
+                        removedVolumes.append(volumeID)
+                    } else {
+                        issues.append("Could not remove volume \(volumeID). \(failureDetail(for: output))")
+                    }
+                } catch {
+                    issues.append("Could not verify or remove volume \(volumeID). \(error.localizedDescription)")
                 }
             }
         }
 
         var removedNetworks: [String] = []
         if !networkIDs.isEmpty {
-            let currentNetworks = try await loadNetworks()
             for networkID in networkIDs.sorted() {
-                guard plan.removableNetworks.contains(where: { $0.id == networkID }),
-                      let network = currentNetworks.first(where: { $0.id == networkID }),
-                      network.projectName == plan.id,
-                      !network.isBuiltIn,
-                      network.containerNames.isEmpty else {
-                    issues.append("Kept network \(networkID) because it is no longer eligible for cleanup.")
-                    continue
-                }
-                let output = try await runner.run(["network", "rm", networkID])
-                if output.status == 0 {
-                    removedNetworks.append(network.name)
-                } else {
-                    let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-                    issues.append(detail.isEmpty ? "Could not remove network \(network.name)." : detail)
+                do {
+                    let currentExternalResources = try await loadExternalComposeResources(for: plan.stack)
+                    guard let plannedNetwork = plan.removableNetworks.first(where: { $0.id == networkID }),
+                          !currentExternalResources.networkNames.contains(plannedNetwork.name) else {
+                        issues.append("Kept network \(networkID) because the current Compose configuration declares it external or it is no longer eligible.")
+                        continue
+                    }
+                    let currentNetworks = try await loadNetworks()
+                    guard plan.removableNetworks.contains(where: { $0.id == networkID }),
+                          let network = currentNetworks.first(where: { $0.id == networkID }),
+                          network.projectName == plan.id,
+                          !network.isBuiltIn,
+                          network.containerNames.isEmpty else {
+                        issues.append("Kept network \(networkID) because it is no longer eligible for cleanup.")
+                        continue
+                    }
+                    let output = try await runner.run(["network", "rm", networkID])
+                    if output.status == 0 {
+                        removedNetworks.append(network.name)
+                    } else {
+                        issues.append("Could not remove network \(network.name). \(failureDetail(for: output))")
+                    }
+                } catch {
+                    issues.append("Could not verify or remove network \(networkID). \(error.localizedDescription)")
                 }
             }
         }
@@ -369,12 +410,54 @@ struct ColimaDockerService {
     }
 
     private func composeArguments(for stack: StackResource, action: String) throws -> [String] {
+        try composeArguments(for: stack, command: [action])
+    }
+
+    private func composeArguments(for stack: StackResource, command: [String]) throws -> [String] {
         guard !stack.configFiles.isEmpty else {
             throw DockerCommandError.invalidOutput("No Compose files were recorded for stack \(stack.id).")
         }
         return ["compose", "--project-name", stack.id]
             + stack.configFiles.flatMap { ["--file", $0] }
-            + [action]
+            + command
+    }
+
+    private func loadExternalComposeResources(for stack: StackResource) async throws -> ExternalComposeResources {
+        let output = try await runner.runChecked(
+            composeArguments(for: stack, command: ["config", "--format", "json"])
+        )
+        let configuration: [String: Any]
+        do {
+            guard let object = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else {
+                throw DockerCommandError.invalidOutput("Compose configuration was not a JSON object.")
+            }
+            configuration = object
+        } catch let error as DockerCommandError {
+            throw error
+        } catch {
+            throw DockerCommandError.invalidOutput("Compose configuration was not valid JSON.")
+        }
+
+        return ExternalComposeResources(
+            volumeNames: externalResourceNames(in: configuration, section: "volumes"),
+            networkNames: externalResourceNames(in: configuration, section: "networks")
+        )
+    }
+
+    private func externalResourceNames(in configuration: [String: Any], section: String) -> Set<String> {
+        guard let definitions = configuration[section] as? [String: Any] else { return [] }
+        return Set(definitions.compactMap { key, rawDefinition in
+            guard let definition = rawDefinition as? [String: Any] else { return nil }
+            let externalObject = definition["external"] as? [String: Any]
+            let isExternal = (definition["external"] as? Bool == true) || externalObject != nil
+            guard isExternal else { return nil }
+            return (definition["name"] as? String) ?? (externalObject?["name"] as? String) ?? key
+        })
+    }
+
+    private func failureDetail(for output: CommandOutput) -> String {
+        let detail = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty ? "Docker returned exit code \(output.status)." : detail
     }
 
     private func fetchContainers() async throws -> [ContainerResource] {
@@ -449,6 +532,11 @@ struct ColimaDockerService {
         let right = right.lowercased()
         return left == right || left.hasPrefix(right) || right.hasPrefix(left)
     }
+}
+
+private struct ExternalComposeResources {
+    let volumeNames: Set<String>
+    let networkNames: Set<String>
 }
 
 private struct ComposeProjectRecord: Decodable {

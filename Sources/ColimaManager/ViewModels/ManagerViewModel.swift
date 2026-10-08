@@ -200,7 +200,9 @@ final class ManagerViewModel: ObservableObject {
     func removeConfirmationMessage() -> String {
         switch removalTarget {
         case let .container(container):
-            let action = container.isRunning ? "It will be stopped and removed." : "It will be removed."
+            let action = container.isRunning
+                ? "Docker will stop it using its configured grace period and may force-terminate it if that period expires, then remove it."
+                : "It will be removed."
             return "Remove \(container.name)? \(action) Attached volumes will be kept."
         case let .image(image):
             return "Remove \(image.repository) \(image.tags.joined(separator: ", "))? Images used by containers cannot be force-removed."
