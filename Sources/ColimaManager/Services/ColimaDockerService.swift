@@ -253,7 +253,11 @@ struct ColimaDockerService {
         var issues: [String] = []
         var removedContainerCount = 0
         if !currentProjectContainers.isEmpty {
-            let output = try await runner.run(["container", "rm", "--force"] + currentProjectContainers.map(\.id))
+            let runningIDs = currentProjectContainers.filter(\.isRunning).map(\.id)
+            if !runningIDs.isEmpty {
+                _ = try await runner.runChecked(["container", "stop"] + runningIDs)
+            }
+            let output = try await runner.run(["container", "rm"] + currentProjectContainers.map(\.id))
             let after = try await fetchContainers()
             let remainingIDs = Set(after.filter { $0.projectName == plan.id }.map(\.id))
             removedContainerCount = currentProjectContainers.filter { !remainingIDs.contains($0.id) }.count
@@ -327,7 +331,13 @@ struct ColimaDockerService {
     }
 
     func removeContainer(_ container: ContainerResource) async throws {
-        _ = try await runner.runChecked(["container", "rm", "--force", container.id])
+        guard let current = try await fetchContainers().first(where: { $0.id == container.id }) else {
+            throw DockerCommandError.invalidOutput("Container \(container.name) no longer exists. Refresh and try again.")
+        }
+        if current.isRunning {
+            _ = try await runner.runChecked(["container", "stop", current.id])
+        }
+        _ = try await runner.runChecked(["container", "rm", current.id])
     }
 
     func removeImage(_ image: ImageResource) async throws {

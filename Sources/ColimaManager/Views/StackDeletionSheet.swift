@@ -13,7 +13,7 @@ struct StackDeletionSheet: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Delete stack \(plan.stack.id)?")
                     .font(.title3.weight(.semibold))
-                Text("This removes \(plan.containers.count) container(s). Compose files on disk are kept.")
+                Text("This stops running containers, then removes \(plan.containers.count) container(s). Compose files on disk are kept.")
                     .foregroundStyle(.secondary)
             }
 
