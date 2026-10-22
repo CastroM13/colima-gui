@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT_DIR/dist/ColimaManager.app"
 
 cd "$ROOT_DIR"
-swift build -c release
+swift build -c release "$@"
+BIN_DIR="$(swift build -c release "$@" --show-bin-path)"
 
+rm -rf "$APP_DIR/Contents/_CodeSignature"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-cp "$ROOT_DIR/.build/release/ColimaManager" "$APP_DIR/Contents/MacOS/ColimaManager"
+cp "$BIN_DIR/ColimaManager" "$APP_DIR/Contents/MacOS/ColimaManager"
 
 ICON_TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$ICON_TEMP_DIR"' EXIT
@@ -41,7 +43,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.0.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>

@@ -37,13 +37,30 @@ Search the selected tab, refresh on demand, and use the toolbar to prune support
 - macOS 13 or later.
 - [Colima](https://github.com/abiosoft/colima) using the **default profile with the Docker runtime**.
 - [Docker CLI](https://github.com/docker/cli) and the [Docker Compose plugin](https://github.com/docker/compose).
-- Xcode command-line tools with Swift 5.10 or later to build from source.
+- Xcode command-line tools with Swift 5.10 or later **only if building from source**.
 
 Docker Desktop is not required. Colima, Docker, and Compose are installed separately from this app.
 
 ## Install
 
-### 1. Install the command-line dependencies
+### Download the prebuilt app
+
+1. Install the command-line dependencies described below.
+2. Download **[ColimaManager-macOS-universal.zip](https://github.com/CastroM13/colima-gui/releases/latest/download/ColimaManager-macOS-universal.zip)** from the [latest release](https://github.com/CastroM13/colima-gui/releases/latest).
+3. Unzip it and drag **ColimaManager.app** into **Applications**.
+4. Launch it from Applications. Colima starts automatically when needed.
+
+The ZIP supports Apple Silicon and Intel Macs running macOS 13 or later. Xcode and Swift are not needed to run the prebuilt app. Colima, Docker CLI, and Docker Compose are still required.
+
+The prebuilt app is ad-hoc signed, without Apple Developer ID signing or notarization. If macOS blocks the first launch, and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to launch it. See [Apple's instructions](https://support.apple.com/en-us/102445).
+
+A `SHA256SUMS.txt` file is included in each release. To verify a download, put both files in the same directory and run:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+### Install the command-line dependencies
 
 With [Homebrew](https://brew.sh/):
 
@@ -67,7 +84,7 @@ If Compose is not found, follow the [Homebrew Compose setup instructions](https:
 
 For a standard Intel Homebrew installation, use `/usr/local/lib/docker/cli-plugins`. Run `brew --prefix` to check your Homebrew prefix.
 
-### 2. Build the app
+### Build from source (optional)
 
 Install the Xcode command-line tools if needed:
 
@@ -85,7 +102,7 @@ cd colima-gui
 
 The build creates `dist/ColimaManager.app`, including its Dock icon. No Xcode project setup is required.
 
-### 3. Move it to Applications
+### Install a local build
 
 Drag `dist/ColimaManager.app` into **Applications** and launch it from there. You can also try the build directly:
 
@@ -93,7 +110,7 @@ Drag `dist/ColimaManager.app` into **Applications** and launch it from there. Yo
 open dist/ColimaManager.app
 ```
 
-To update, quit the app, pull the latest source, rebuild, and replace the copy in Applications. The local build script does not sign or notarize the app.
+To update, quit the app and replace the copy in Applications with the latest download or a new local build. The local build script does not sign or notarize the app.
 
 ## How it works
 
@@ -130,6 +147,14 @@ swift build
 swift test
 ./scripts/build-app.sh
 ```
+
+To build a universal distribution ZIP and its checksum:
+
+```sh
+./scripts/package-release.sh
+```
+
+This builds both `arm64` and `x86_64`, applies an ad-hoc signature, and writes `dist/ColimaManager-macOS-universal.zip` and `dist/SHA256SUMS.txt`. Developer ID signing and notarization require a separate Apple Developer setup.
 
 Source lives in `Sources/ColimaManager`: `App` contains the window, `Views` the resource UI, `ViewModels` the presentation state, `Services` the CLI integration, and `Models` the resource types. Startup regression tests use temporary CLI fixtures without starting or stopping your real Colima instance.
 
