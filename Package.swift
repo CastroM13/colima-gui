@@ -11,6 +11,7 @@ let package = Package(
         .executableTarget(
             name: "ColimaManager",
             path: "Sources/ColimaManager"
-        )
+        ),
+        .testTarget(name: "ColimaManagerTests", dependencies: ["ColimaManager"])
     ]
 )

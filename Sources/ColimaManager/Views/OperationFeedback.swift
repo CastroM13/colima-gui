@@ -26,6 +26,7 @@ struct OperationFeedback: View {
             }
             .buttonStyle(.borderless)
             .help("Dismiss message")
+            .pointingHandCursor()
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 18)

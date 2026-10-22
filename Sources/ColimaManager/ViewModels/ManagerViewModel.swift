@@ -21,6 +21,8 @@ final class ManagerViewModel: ObservableObject {
 
     private let service: ColimaDockerService
     private var removalSourceTab: ResourceTab?
+    private var pendingPrune: DockerPruneOperation?
+    private var connectionTask: Task<ColimaConnectionState, Never>?
 
     init(service: ColimaDockerService = ColimaDockerService()) {
         self.service = service
@@ -37,7 +39,7 @@ final class ManagerViewModel: ObservableObject {
 
         Task {
             defer { loadingTabs.remove(tab) }
-            connectionState = await service.connectionState()
+            connectionState = await ensureConnection()
             guard connectionState.isConnected else {
                 if case let .unavailable(message) = connectionState {
                     tabErrors[tab] = message
@@ -64,12 +66,38 @@ final class ManagerViewModel: ObservableObject {
         }
     }
 
+    private func ensureConnection() async -> ColimaConnectionState {
+        if let connectionTask { return await connectionTask.value }
+        connectionState = .checking
+        let task = Task {
+            await service.ensureColimaIsRunning { self.connectionState = .starting }
+        }
+        connectionTask = task
+        let state = await task.value
+        connectionTask = nil
+        return state
+    }
+
     func isLoading(_ tab: ResourceTab) -> Bool {
         loadingTabs.contains(tab)
     }
 
     func isBusy(_ kind: String, _ id: String) -> Bool {
         activeOperations.contains("\(kind):\(id)")
+    }
+
+    var isPruning: Bool {
+        activeOperations.contains { $0.hasPrefix("prune:") }
+    }
+
+    func requestPrune(all: Bool) {
+        guard let operation = DockerPruneOperation.operation(for: selectedTab, pruneAll: all) else { return }
+        pendingPrune = operation
+        removalTarget = nil
+        removalSourceTab = nil
+        isShowingRemovalConfirmation = true
+        statusMessage = nil
+        errorMessage = nil
     }
 
     func startStack(_ stack: StackResource) {
@@ -148,6 +176,7 @@ final class ManagerViewModel: ObservableObject {
     }
 
     func requestRemoval(_ target: RemovalTarget, from sourceTab: ResourceTab? = nil) {
+        pendingPrune = nil
         removalTarget = target
         removalSourceTab = sourceTab
         isShowingRemovalConfirmation = true
@@ -157,11 +186,19 @@ final class ManagerViewModel: ObservableObject {
 
     func cancelRemoval() {
         isShowingRemovalConfirmation = false
+        pendingPrune = nil
         removalTarget = nil
         removalSourceTab = nil
     }
 
     func confirmRemoval() {
+        if let operation = pendingPrune {
+            pendingPrune = nil
+            isShowingRemovalConfirmation = false
+            performPrune(operation)
+            return
+        }
+
         guard let target = removalTarget else { return }
         isShowingRemovalConfirmation = false
         removalTarget = nil
@@ -193,7 +230,8 @@ final class ManagerViewModel: ObservableObject {
     }
 
     func removeConfirmationTitle() -> String {
-        switch removalTarget {
+        if let pendingPrune { return pendingPrune.confirmationTitle }
+        return switch removalTarget {
         case .container: "Remove container?"
         case .image: "Remove image?"
         case .volume: "Remove volume?"
@@ -203,6 +241,7 @@ final class ManagerViewModel: ObservableObject {
     }
 
     func removeConfirmationMessage() -> String {
+        if let pendingPrune { return pendingPrune.confirmationMessage }
         switch removalTarget {
         case let .container(container):
             let action = container.isRunning
@@ -218,6 +257,11 @@ final class ManagerViewModel: ObservableObject {
         case nil:
             return ""
         }
+    }
+
+    func confirmationActionTitle() -> String {
+        if let pendingPrune { return pendingPrune.toolbarTitle }
+        return "Remove"
     }
 
     func dismissFeedback() {
@@ -248,6 +292,31 @@ final class ManagerViewModel: ObservableObject {
             }
             activeOperations.remove(key)
             refresh(tab)
+        }
+    }
+
+    private func performPrune(_ operation: DockerPruneOperation) {
+        let key = "prune:\(operation.rawValue)"
+        guard !isPruning else { return }
+        activeOperations.insert(key)
+        statusMessage = nil
+        errorMessage = nil
+
+        Task {
+            do {
+                let output = try await service.prune(operation)
+                let reclaimedSpace = output
+                    .components(separatedBy: .newlines)
+                    .last { $0.localizedCaseInsensitiveContains("Total reclaimed space:") }?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                statusMessage = [operation.successMessage, reclaimedSpace]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            activeOperations.remove(key)
+            refresh(operation.tab)
         }
     }
 }

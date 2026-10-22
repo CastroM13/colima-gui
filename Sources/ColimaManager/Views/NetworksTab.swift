@@ -52,6 +52,7 @@ struct NetworksTab: View {
                     ) { model.requestRemoval(.network(network)) }
                 }
             }
+            .resourceTableRowBackgroundsDisabled()
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)

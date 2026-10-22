@@ -56,6 +56,7 @@ struct ImagesTab: View {
                     ) { model.requestRemoval(.image(image)) }
                 }
             }
+            .resourceTableRowBackgroundsDisabled()
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)

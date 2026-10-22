@@ -1,5 +1,16 @@
 import SwiftUI
 
+extension View {
+    @ViewBuilder
+    func resourceTableRowBackgroundsDisabled() -> some View {
+        if #available(macOS 14.0, *) {
+            self.alternatingRowBackgrounds(.disabled)
+        } else {
+            self
+        }
+    }
+}
+
 struct ResourceTableFrame<Content: View>: View {
     let title: String
     let isLoading: Bool
@@ -18,6 +29,7 @@ struct ResourceTableFrame<Content: View>: View {
                     Spacer()
                     Button("Retry", action: onRefresh)
                         .buttonStyle(.borderless)
+                        .pointingHandCursor()
                 }
                 .font(.callout)
                 .foregroundStyle(.orange)
@@ -73,6 +85,7 @@ struct EmptyResourceState: View {
             if let buttonTitle, let action {
                 Button(buttonTitle, action: action)
                     .padding(.top, 4)
+                    .pointingHandCursor()
             }
         }
         .padding(24)
@@ -101,5 +114,6 @@ struct ResourceActionButton: View {
         .help(title)
         .accessibilityLabel(title)
         .disabled(isDisabled)
+        .pointingHandCursor(isEnabled: !isDisabled)
     }
 }

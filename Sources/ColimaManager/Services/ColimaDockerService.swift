@@ -3,9 +3,23 @@ import Foundation
 struct ColimaDockerService {
     private let runner: DockerCommandRunner
     private let decoder = JSONDecoder()
+    private let colima = CLICommandRunner(name: "colima")
 
     init(runner: DockerCommandRunner = DockerCommandRunner()) {
         self.runner = runner
+    }
+
+    func ensureColimaIsRunning(onStarting: @MainActor () -> Void) async -> ColimaConnectionState {
+        do {
+            let status = try await colima.run(["status", "--profile", "default"])
+            if status.status != 0 {
+                await onStarting()
+                _ = try await colima.runChecked(["start", "--profile", "default"])
+            }
+            return await connectionState()
+        } catch {
+            return .unavailable(message: error.localizedDescription)
+        }
     }
 
     func connectionState() async -> ColimaConnectionState {
@@ -408,6 +422,10 @@ struct ColimaDockerService {
             throw DockerCommandError.resourceInUse(name: network.name, users: current.containerNames)
         }
         _ = try await runner.runChecked(["network", "rm", network.id])
+    }
+
+    func prune(_ operation: DockerPruneOperation) async throws -> String {
+        try await runner.runChecked(operation.arguments)
     }
 
     private func composeArguments(for stack: StackResource, action: String) throws -> [String] {

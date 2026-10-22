@@ -49,23 +49,7 @@ struct StacksTab: View {
         let isExpanded = expandedStackIDs.contains(stack.id)
 
         return VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        toggleStack(stack)
-                    }
-                } label: {
-                    stackSummary(stack, isExpanded: isExpanded)
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") stack \(stack.id)")
-                .accessibilityValue("\(stack.containerCount) containers")
-
-                stackActions(stack)
-                    .padding(.trailing, 10)
-            }
+            stackHeader(stack, isExpanded: isExpanded)
 
             if isExpanded {
                 Divider()
@@ -86,46 +70,89 @@ struct StacksTab: View {
         }
     }
 
-    private func stackSummary(_ stack: StackResource, isExpanded: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .accessibilityHidden(true)
+    private func stackHeader(_ stack: StackResource, isExpanded: Bool) -> some View {
+        HStack(spacing: 0) {
+            stackToggleButton(stack, isExpanded: isExpanded) {
+                HStack(spacing: 10) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .accessibilityHidden(true)
 
-            ResourceStatusIcon(
-                symbol: "square.stack.3d.up",
-                tint: ResourceStatusTint.color(for: stack),
-                title: stack.id,
-                status: stack.status,
-                details: [
-                    "\(stack.runningContainerCount) running · \(stack.containerCount) total",
-                    stack.configFiles.first ?? "Compose file unavailable"
-                ]
-            )
+                    ResourceStatusIcon(
+                        id: "stack:\(stack.id)",
+                        symbol: "square.stack.3d.up",
+                        tint: ResourceStatusTint.color(for: stack),
+                        title: stack.id,
+                        status: stack.status,
+                        details: [
+                            "\(stack.runningContainerCount) running · \(stack.containerCount) total",
+                            stack.configFiles.first ?? "Compose file unavailable"
+                        ]
+                    )
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 10)
+                .frame(minHeight: 58)
+                .contentShape(Rectangle())
+            }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(stack.id)
-                    .font(.headline)
-                Text(stack.configFiles.first ?? "Compose file unavailable")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                    .help(stack.configFiles.joined(separator: "\n"))
+            VStack(alignment: .leading, spacing: 2) {
+                stackToggleButton(stack, isExpanded: isExpanded) {
+                    Text(stack.id)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+
+                ZStack(alignment: .leading) {
+                    stackToggleButton(stack, isExpanded: isExpanded) {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: 18)
+                            .contentShape(Rectangle())
+                    }
+
+                    ComposeFilePath(path: stack.configFiles.first)
+                        .zIndex(1)
+                }
+                .frame(maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize()
+            stackToggleButton(stack, isExpanded: isExpanded) {
+                Text("\(stack.runningContainerCount) running · \(stack.containerCount) total")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+            }
+
+            stackActions(stack)
+                .padding(.trailing, 10)
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-        .padding(.leading, 10)
-        .padding(.trailing, 12)
+    }
+
+    private func stackToggleButton<Label: View>(
+        _ stack: StackResource,
+        isExpanded: Bool,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                toggleStack(stack)
+            }
+        } label: {
+            label()
+        }
+        .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") stack \(stack.id)")
+        .accessibilityValue("\(stack.containerCount) containers")
+        .pointingHandCursor()
     }
 
     @ViewBuilder
@@ -141,6 +168,7 @@ struct StacksTab: View {
                 ForEach(stack.containers) { container in
                     HStack(spacing: 12) {
                         ResourceStatusIcon(
+                            id: "stack-container:\(stack.id):\(container.id)",
                             symbol: "shippingbox",
                             tint: ResourceStatusTint.color(for: container),
                             title: container.name,
@@ -165,14 +193,8 @@ struct StacksTab: View {
 
                         Spacer(minLength: 12)
 
-                        if !container.ports.isEmpty {
-                            Text(container.ports)
-                                .font(.caption.monospaced())
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .foregroundStyle(.secondary)
-                                .help(container.ports)
-                        }
+                        PublishedPortLinks(portDescription: container.ports)
+                            .frame(minWidth: 40, alignment: .trailing)
 
                         ContainerActionButtons(container: container, refreshTab: .stacks)
                     }

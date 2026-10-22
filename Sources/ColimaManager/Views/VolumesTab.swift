@@ -51,6 +51,7 @@ struct VolumesTab: View {
                     ) { model.requestRemoval(.volume(volume)) }
                 }
             }
+            .resourceTableRowBackgroundsDisabled()
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)

@@ -1,21 +1,35 @@
 import Foundation
 
-struct DockerCommandRunner {
+struct CLICommandRunner {
+    private let name: String
+    private let argumentPrefix: [String]
     private let executableURL: URL?
 
-    init(executableURL: URL? = DockerCommandRunner.findDockerExecutable()) {
+    init(name: String, argumentPrefix: [String] = [], executableURL: URL?) {
+        self.name = name
+        self.argumentPrefix = argumentPrefix
         self.executableURL = executableURL
+    }
+
+    init(name: String, argumentPrefix: [String] = []) {
+        self.init(name: name, argumentPrefix: argumentPrefix, executableURL: Self.findExecutable(name))
     }
 
     func run(_ arguments: [String]) async throws -> CommandOutput {
         guard let executableURL else {
-            throw DockerCommandError.executableNotFound
+            throw CLICommandError.executableNotFound(name)
         }
 
         return try await Task.detached(priority: .utility) {
             let process = Process()
             process.executableURL = executableURL
-            process.arguments = ["--context", "colima"] + arguments
+            process.arguments = argumentPrefix + arguments
+            // Finder launches have a minimal PATH; Colima also needs to find Lima and its helpers.
+            var environment = ProcessInfo.processInfo.environment
+            let inheritedPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+            environment["PATH"] = [executableURL.deletingLastPathComponent().path, inheritedPath,
+                                   "/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
+            process.environment = environment
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -25,7 +39,7 @@ struct DockerCommandRunner {
             do {
                 try process.run()
             } catch {
-                throw DockerCommandError.launchFailed(error.localizedDescription)
+                throw CLICommandError.launchFailed(name, error.localizedDescription)
             }
 
             let outputTask = Task.detached(priority: .utility) {
@@ -55,7 +69,7 @@ struct DockerCommandRunner {
     func runChecked(_ arguments: [String]) async throws -> String {
         let output = try await run(arguments)
         guard output.status == 0 else {
-            let command = (["docker", "--context", "colima"] + arguments).joined(separator: " ")
+            let command = ([name] + argumentPrefix + arguments).joined(separator: " ")
             throw DockerCommandError.commandFailed(
                 command: command,
                 message: output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -64,19 +78,53 @@ struct DockerCommandRunner {
         return output.standardOutput
     }
 
-    private static func findDockerExecutable() -> URL? {
+    private static func findExecutable(_ name: String) -> URL? {
         let fileManager = FileManager.default
         let pathEntries = ProcessInfo.processInfo.environment["PATH"]?
             .split(separator: ":")
-            .map { URL(fileURLWithPath: String($0), isDirectory: true).appendingPathComponent("docker") }
+            .map { URL(fileURLWithPath: String($0), isDirectory: true).appendingPathComponent(name) }
             ?? []
 
         let candidates = pathEntries + [
-            URL(fileURLWithPath: "/opt/homebrew/bin/docker"),
-            URL(fileURLWithPath: "/usr/local/bin/docker"),
-            URL(fileURLWithPath: "/usr/bin/docker")
+            URL(fileURLWithPath: "/opt/homebrew/bin/\(name)"),
+            URL(fileURLWithPath: "/usr/local/bin/\(name)"),
+            URL(fileURLWithPath: "/usr/bin/\(name)")
         ]
 
         return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+    }
+}
+
+struct DockerCommandRunner {
+    private let runner: CLICommandRunner
+
+    init() {
+        runner = CLICommandRunner(name: "docker", argumentPrefix: ["--context", "colima"])
+    }
+
+    init(executableURL: URL?) {
+        runner = CLICommandRunner(name: "docker", argumentPrefix: ["--context", "colima"], executableURL: executableURL)
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandOutput {
+        try await runner.run(arguments)
+    }
+
+    func runChecked(_ arguments: [String]) async throws -> String {
+        try await runner.runChecked(arguments)
+    }
+}
+
+private enum CLICommandError: LocalizedError {
+    case executableNotFound(String)
+    case launchFailed(String, String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .executableNotFound(name):
+            return "The \(name) CLI was not found. Install it, then reopen the app."
+        case let .launchFailed(name, message):
+            return "Could not start \(name) CLI: \(message)"
+        }
     }
 }

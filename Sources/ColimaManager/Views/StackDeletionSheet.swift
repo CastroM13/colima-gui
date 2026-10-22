@@ -78,9 +78,11 @@ struct StackDeletionSheet: View {
                 Spacer()
                 Button("Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
+                    .pointingHandCursor()
                 Button("Delete Stack", role: .destructive) {
                     onDelete(selectedVolumeIDs, selectedNetworkIDs)
                 }
+                .pointingHandCursor()
             }
         }
         .padding(20)
@@ -120,6 +122,7 @@ struct StackDeletionSheet: View {
                         .truncationMode(.middle)
                 }
                 .toggleStyle(.checkbox)
+                .pointingHandCursor()
             }
         }
     }

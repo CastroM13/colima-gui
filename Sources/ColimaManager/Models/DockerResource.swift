@@ -30,8 +30,91 @@ enum ResourceTab: String, CaseIterable, Identifiable {
     }
 }
 
+enum DockerPruneOperation: String, CaseIterable {
+    case stoppedContainers
+    case danglingImages
+    case allUnusedImages
+    case anonymousVolumes
+    case allUnusedVolumes
+    case unusedNetworks
+
+    static func operation(for tab: ResourceTab, pruneAll: Bool) -> DockerPruneOperation? {
+        switch (tab, pruneAll) {
+        case (.containers, false): .stoppedContainers
+        case (.images, false): .danglingImages
+        case (.images, true): .allUnusedImages
+        case (.volumes, false): .anonymousVolumes
+        case (.volumes, true): .allUnusedVolumes
+        case (.networks, false): .unusedNetworks
+        case (.stacks, _), (.containers, true), (.networks, true): nil
+        }
+    }
+
+    var tab: ResourceTab {
+        switch self {
+        case .stoppedContainers: .containers
+        case .danglingImages, .allUnusedImages: .images
+        case .anonymousVolumes, .allUnusedVolumes: .volumes
+        case .unusedNetworks: .networks
+        }
+    }
+
+    var arguments: [String] {
+        switch self {
+        case .stoppedContainers: ["container", "prune", "--force"]
+        case .danglingImages: ["image", "prune", "--force"]
+        case .allUnusedImages: ["image", "prune", "--all", "--force"]
+        case .anonymousVolumes: ["volume", "prune", "--force"]
+        case .allUnusedVolumes: ["volume", "prune", "--all", "--force"]
+        case .unusedNetworks: ["network", "prune", "--force"]
+        }
+    }
+
+    var toolbarTitle: String {
+        switch self {
+        case .stoppedContainers: "Prune stopped containers"
+        case .danglingImages: "Prune dangling images"
+        case .allUnusedImages: "Prune all unused images"
+        case .anonymousVolumes: "Prune unused anonymous volumes"
+        case .allUnusedVolumes: "Prune all unused volumes"
+        case .unusedNetworks: "Prune unused networks"
+        }
+    }
+
+    var confirmationTitle: String { toolbarTitle + "?" }
+
+    var confirmationMessage: String {
+        switch self {
+        case .stoppedContainers:
+            "This removes all stopped containers. Running containers and their attached volumes are kept."
+        case .danglingImages:
+            "This removes untagged images that are not used by any container. Images referenced by containers are kept."
+        case .allUnusedImages:
+            "This removes every image not used by a container, including tagged images. Images referenced by containers are kept."
+        case .anonymousVolumes:
+            "This permanently deletes unused anonymous volumes. Volumes referenced by any container are kept."
+        case .allUnusedVolumes:
+            "This permanently deletes all unused volumes, including named volumes. Volumes referenced by any container are kept."
+        case .unusedNetworks:
+            "This removes user-defined networks that are not used by any container. Built-in networks are kept."
+        }
+    }
+
+    var successMessage: String {
+        switch self {
+        case .stoppedContainers: "Pruned stopped containers."
+        case .danglingImages: "Pruned dangling images."
+        case .allUnusedImages: "Pruned all unused images."
+        case .anonymousVolumes: "Pruned unused anonymous volumes."
+        case .allUnusedVolumes: "Pruned all unused volumes."
+        case .unusedNetworks: "Pruned unused networks."
+        }
+    }
+}
+
 enum ColimaConnectionState: Equatable {
     case checking
+    case starting
     case connected(serverVersion: String)
     case unavailable(message: String)
 
