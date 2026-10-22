@@ -8,6 +8,18 @@ A lightweight, native macOS app for managing Docker resources running in [Colima
 
 Open the app and it starts the default Colima profile when needed. Browse Compose projects, manage containers, and clean up unused resources from one window.
 
+## Screenshots
+
+![Compose stacks with an expanded storefront project and its containers](Assets/Screenshots/stacks.png)
+
+| Containers | Images |
+| --- | --- |
+| ![Running and stopped demo containers with ports and lifecycle actions](Assets/Screenshots/containers.png) | ![Demo images with tags, sizes, and container usage](Assets/Screenshots/images.png) |
+
+| Volumes | Networks |
+| --- | --- |
+| ![Demo volumes showing project ownership and usage](Assets/Screenshots/volumes.png) | ![Demo networks showing attached containers and unused networks](Assets/Screenshots/networks.png) |
+
 ## Features
 
 | Tab | What you can do |
